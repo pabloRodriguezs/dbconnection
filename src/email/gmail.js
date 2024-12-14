@@ -1,9 +1,29 @@
 import fs from "fs";
 import readline from "readline";
 import { google } from "googleapis";
+import { MongoClient } from "mongodb";
+
+const uri = "mongodb://localhost:27017";
+const client = new MongoClient(uri);
+const dbName = "miBaseDeDatos";
 
 const SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]; // Permisos para leer correos
 const TOKEN_PATH = "token.json"; // Archivo donde se guarda el token de acceso
+
+async function postBooking(data) {
+  try {
+    await client.connect();
+    console.log("Conectado a MongoDB");
+    const db = client.db(dbName);
+    const coleccion = db.collection("miColeccion");
+    const resultado = await coleccion.insertOne(data);
+    console.log("Documento insertado:", resultado);
+  } catch (err) {
+    console.error("Error al conectar con MongoDB:", err);
+  } finally {
+    await client.close();
+  }
+}
 
 // Cargar las credenciales desde el archivo JSON
 const credentials = JSON.parse(fs.readFileSync("credentials.json"));
@@ -60,21 +80,16 @@ async function listarCorreos(auth) {
       userId: "me",
       id: message.id,
     });
-
-    const headers = email.data.payload.headers;
-    const fromHeader = headers.find((header) => header.name === "From");
-    const subjectHeader = headers.find((header) => header.name === "Subject");
-
-    console.log("De:", fromHeader?.value);
-    console.log("Asunto:", subjectHeader?.value);
-    console.log("Mensaje:", email.data.snippet);
+    const body = email.data.snippet;
+    const formatedEmail = extractBookingData(body);
+    postBooking(formatedEmail);
 
     // Opcional: Marca el correo como leído
-    await gmail.users.messages.modify({
-      userId: "me",
-      id: message.id,
-      resource: { removeLabelIds: ["UNREAD"] },
-    });
+    // await gmail.users.messages.modify({
+    //   userId: "me",
+    //   id: message.id,
+    //   resource: { removeLabelIds: ["UNREAD"] },
+    // });
   }
 }
 
@@ -85,4 +100,28 @@ if (fs.existsSync(TOKEN_PATH)) {
   listarCorreos(oAuth2Client);
 } else {
   getAccessToken(oAuth2Client);
+}
+
+function extractBookingData(text) {
+  const data = {};
+
+  // Extract "Nombre y apellidos"
+  const nameMatch = text.match(/Nombre y apellidos: ([\w\s]+)/i);
+  data.name = nameMatch ? nameMatch[1].trim() : null;
+
+  // Extract "Número de reserva"
+  const reservationNumberMatch = text.match(/Número de reserva: ([\w\d]+)/i);
+  data.reservationNumber = reservationNumberMatch
+    ? reservationNumberMatch[1].trim()
+    : null;
+
+  // Extract "Teléfono móvil"
+  const phoneMatch = text.match(/Teléfono móvil: (\+?\d[\d\s]+)/i);
+  data.phone = phoneMatch ? phoneMatch[1].replace(/\s+/g, "").trim() : null;
+
+  // Extract "Número de matrícula"
+  const licensePlateMatch = text.match(/Número de matrícula: ([\w\d]+)/i);
+  data.licensePlate = licensePlateMatch ? licensePlateMatch[1].trim() : null;
+
+  return data;
 }
